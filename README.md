@@ -5,7 +5,7 @@
 [![NS-3 3.40](https://img.shields.io/badge/NS--3-3.40-green.svg)](https://nsnam.org)
 [![liboqs 0.15.0](https://img.shields.io/badge/liboqs-0.15.0-orange.svg)](https://github.com/open-quantum-safe/liboqs)
 
-> **Submitted to:** IEEE Transactions on Industrial Informatics (TII)
+> **Submitted to:** IEEE (Pre-Print)
 
 ---
 
@@ -375,8 +375,9 @@ If you use this code or results, please cite:
 @article{pqtdag2025,
   title   = {{PQ-TDAG}: Bandwidth-Efficient Post-Quantum Authentication
              for Industrial Control Systems via Micro-Chaining},
+  authors = {Homaei. Mohammadhossein},
   journal = {IEEE Transactions on Industrial Informatics},
-  year    = {2025}
+  year    = {2026}
 }
 ```
 

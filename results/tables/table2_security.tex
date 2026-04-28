@@ -1,0 +1,20 @@
+\begin{table}[h]
+\centering
+\caption{Security Properties Comparison. EUF-CMA: Existential Unforgeability under Chosen Message Attack. PQ: Post-Quantum secure. Stateless: no key-state management required.}
+\label{tab:security}
+\begin{tabular}{lccccp{2.8cm}}
+\toprule
+\textbf{Scheme} & EUF-CMA & PQ-Secure & Stateless & BFT DAG & Notes \\
+\midrule
+\textbf{PQ-TDAG (Ours)} & \checkmark & \checkmark & \checkmark & \checkmark & Decentralized DAG \\
+\midrule
+Naive ML-DSA-44 & \checkmark & \checkmark & \checkmark & \ding{55} & Flat signed DAG \\
+ML-DSA-65 (FIPS204 L3) & \checkmark & \checkmark & \checkmark & \ding{55} & Flat signed DAG \\
+Falcon-512 & \checkmark & \checkmark & \checkmark & \ding{55} & Flat signed DAG \\
+SLH-DSA-SHA2-128s (FIPS205) & \checkmark & \checkmark & \checkmark & \ding{55} & Flat signed DAG \\
+SLH-DSA-SHA2-128f (FIPS205) & \checkmark & \checkmark & \checkmark & \ding{55} & Flat signed DAG \\
+XMSS-MT (RFC8391) ⚠ stateful & \checkmark & \checkmark & \textbf{\ding{55}} & \ding{55} & Stateful — key reuse risk \\
+ECDSA-P256 (Classical) & \ding{55} & \ding{55} & \checkmark & \ding{55} & Quantum-vulnerable \\
+\bottomrule
+\end{tabular}
+\end{table}

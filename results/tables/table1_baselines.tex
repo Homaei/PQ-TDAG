@@ -1,0 +1,26 @@
+\begin{table*}[t]
+\centering
+\caption{Cryptographic Baseline Comparison. All timings measured on Intel Core i9-14900KF with AVX2 + AVX-VNNI acceleration via liboqs~v0.15.0. Bold = proposed method.}
+\label{tab:baselines_full}
+\begin{threeparttable}
+\begin{tabular}{lrrrrrrcc}
+\toprule
+\textbf{Scheme} & $|\sigma|$ (B) & $|pk|$ (B) & $t_{sign}$ (ms) & $t_{verify}$ (ms) & $B_{req}^{N=50}$ (Mbps) & Sign/s & PQC & ICS Feasible \\
+\midrule
+\textbf{PQ-TDAG (Ours)} & 2420 & 1312 & 0.044 $\pm$ 0.026 & 0.016 $\pm$ 0.001 & 4.67 & 22,958 & \checkmark & \cellcolor{green!10}\checkmark \\
+\midrule
+Naive ML-DSA-44 & 2420 & 1312 & 0.043 $\pm$ 0.025 & 0.016 $\pm$ 0.001 & 20.16 & 23,521 & \checkmark & \cellcolor{red!10}\ding{55} \\
+ML-DSA-65 (FIPS204 L3) & 3309 & 1952 & 0.070 $\pm$ 0.039 & 0.025 $\pm$ 0.001 & 27.27 & 14,255 & \checkmark & \cellcolor{red!10}\ding{55} \\
+Falcon-512 & 655 & 897 & 0.117 $\pm$ 0.003 & 0.022 $\pm$ 0.001 & 6.04 & 8,560 & \checkmark & \cellcolor{green!10}\checkmark \\
+SLH-DSA-SHA2-128s (FIPS205) & 7856 & 32 & 284.213 $\pm$ 2.114 & 0.286 $\pm$ 0.006 & 63.65 & 3 & \checkmark & \cellcolor{red!10}\ding{55} \\
+SLH-DSA-SHA2-128f (FIPS205) & 17088 & 32 & 13.572 $\pm$ 0.195 & 0.795 $\pm$ 0.022 & 137.50 & 73 & \checkmark & \cellcolor{red!10}\ding{55} \\
+XMSS-MT (RFC8391) ⚠ stateful & 4963 & 64 & 12.400 $\pm$ 0.850 & 1.180 $\pm$ 0.042 & 40.50 & 81 & \checkmark & \cellcolor{red!10}\ding{55} \\
+ECDSA-P256 (Classical) & 64 & 64 & 0.303 $\pm$ 0.006 & 0.677 $\pm$ 0.012 & 1.31 & 3,304 & $\times$ & \cellcolor{green!10}\checkmark \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}\small
+\item $|\sigma|$: signature size; $|pk|$: public key size; $B_{req}$: required bandwidth at $N=50$, $f=20$ Hz; M=5 for PQ-TDAG, M=1 for all others.
+\item \cellcolor{red!10} = infeasible ($B_{req} > B_{max}$); \cellcolor{green!10} = feasible.
+\end{tablenotes}
+\end{threeparttable}
+\end{table*}

@@ -1,0 +1,64 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.env/
+.venv/
+env/
+pq_tdag_env/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# NS-3 build artifacts (if built inside repo)
+ns-3.*/
+cmake-cache/
+*.pcap
+*.tr
+
+# Temporary files
+# (Commented out to allow tracking of research data and results)
+# results/data/*.json
+# results/data/*.csv
+results/figures/*.pdf
+results/figures/*.png
+# results/tables/*.tex
+# results/logs/*.txt
+# results/logs/*.log
+!results/data/.gitkeep
+!results/figures/.gitkeep
+!results/tables/.gitkeep
+!results/logs/.gitkeep
+
+# Explicitly track the hardware comparison figure as requested
+!results/figures/fig_hardware_comparison.pdf
+!results/figures/fig_hardware_comparison.png
+
+# Do not track article source and bibliography
+text.tex
+*.bib
+references.bib
+!results/logs/.gitkeep

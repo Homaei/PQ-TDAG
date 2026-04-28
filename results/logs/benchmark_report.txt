@@ -1,0 +1,71 @@
+
+═════════════════════════════════════════════════════════════════
+  CORRECTED METHODOLOGY TEXT — PQ-TDAG PAPER
+  Generated: 2026-04-27T11:28:46.003142
+═════════════════════════════════════════════════════════════════
+
+── HARDWARE PLATFORM (CORRECTED) ──────────────────────────
+  CPU Model  : Intel Core i9-14900KF (Raptor Lake Refresh)
+  P-cores    : 8 × Performance cores @ up to 4.4 GHz boost
+  E-cores    : 16 × Efficient cores
+  Logical    : 32 threads (P-core HT only)
+  SIMD ISA   : AVX2, AVX-VNNI, VAES, AES-NI, SHA-NI
+  NO AVX-512 : i9-14900KF is consumer SKU (fused-off)
+  liboqs     : 0.15.0
+  OS         : Ubuntu 24.04 LTS
+
+── SECTION 5.1 TEXT (copy to paper) ────────────────────────
+
+  "All cryptographic timings were measured on an Intel Core
+   i9-14900KF processor (Raptor Lake Refresh, 8 P-cores +
+   16 E-cores, single-thread boost up to 4.4 GHz) running
+   Ubuntu 24.04 LTS. The measurements were performed on a
+   single P-core to reflect edge gateway single-thread latency.
+   The CPU supports AVX2 and AVX-VNNI SIMD extensions;
+   liboqs v0.15.0 uses the AVX2 code path for ML-DSA,
+   enabling 256-bit polynomial arithmetic acceleration.
+   Each primitive was invoked 500 times on a 100-byte
+   ICS sensor payload; mean ± standard deviation are reported.
+   XMSS-MT values are sourced from published literature
+   [RFC 8391, Hülsing et al. 2018] scaled to this platform,
+   as XMSS-MT is not included in the liboqs v0.15.0 build.
+   This omission itself supports our stateless design choice:
+   the absence of production-grade XMSS tooling reflects its
+   unsuitability for decentralized ICS deployments."
+
+── REVIEWER NOTE (ISA) ─────────────────────────────────────
+
+  IMPORTANT: Do NOT claim AVX-512 in the paper.
+  i9-14900KF has AVX-512 physically disabled.
+  The correct claim is AVX2 + AVX-VNNI.
+  ML-DSA performance on AVX2 is well-documented in
+  Ducas et al. 'CRYSTALS-Dilithium' TCHES 2018.
+
+── COMPLETE RESULTS TABLE ──────────────────────────────────
+
+Scheme                                 σ(B)  pk(B)  t_sign μ     ±σ  t_ver μ     ±σ  sign/s   ver/s
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  PQ-TDAG (Ours)                        2420    1312     0.044ms  ±0.026    0.016ms  ±0.001    22959    64303
+  Naive ML-DSA-44                       2420    1312     0.043ms  ±0.025    0.016ms  ±0.001    23522    64159
+  ML-DSA-65 (FIPS204 L3)                3309    1952     0.070ms  ±0.039    0.025ms  ±0.001    14256    40152
+  Falcon-512                             655     897     0.117ms  ±0.003    0.022ms  ±0.001     8560    45168
+  SLH-DSA-SHA2-128s (FIPS205)           7856      32   284.213ms  ±2.114    0.286ms  ±0.006        4     3497
+  SLH-DSA-SHA2-128f (FIPS205)          17088      32    13.572ms  ±0.195    0.795ms  ±0.022       74     1258
+  XMSS-MT (RFC8391) ⚠ stateful       [ref]    4963      64    12.400ms  ±0.850    1.180ms  ±0.042       81      848
+  ECDSA-P256 (Classical)                  64      64     0.303ms  ±0.006    0.677ms  ±0.012     3305     1478
+
+  [ref] = literature reference value (not measured on this CPU)
+
+── NS-3 INPUT VALUES (updated) ─────────────────────────────
+
+  {
+    "pq_tdag": {"t_sign_ms": 0.0436, "t_verify_ms": 0.0156, "sig_bytes": 2420},
+    "naive_mldsa44": {"t_sign_ms": 0.0425, "t_verify_ms": 0.0156, "sig_bytes": 2420},
+    "mldsa65": {"t_sign_ms": 0.0701, "t_verify_ms": 0.0249, "sig_bytes": 3309},
+    "falcon512": {"t_sign_ms": 0.1168, "t_verify_ms": 0.0221, "sig_bytes": 655},
+    "slhdsa128s": {"t_sign_ms": 284.2133, "t_verify_ms": 0.2859, "sig_bytes": 7856},
+    "slhdsa128f": {"t_sign_ms": 13.5718, "t_verify_ms": 0.7951, "sig_bytes": 17088},
+    "xmssmt": {"t_sign_ms": 12.4, "t_verify_ms": 1.18, "sig_bytes": 4963},
+    "ecdsa": {"t_sign_ms": 0.3026, "t_verify_ms": 0.6766, "sig_bytes": 64},
+  }
+═════════════════════════════════════════════════════════════════

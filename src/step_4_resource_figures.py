@@ -3,12 +3,12 @@ src/step_4_resource_figures.py
 ───────────────────────────────────────────────────────────────────
 Group E: Resource Consumption Figures
   fig_E1 — Memory Footprint per Gateway vs N
-  fig_E2 — Energy per Transaction (W1-corrected energy model)
+  fig_E2 — Energy per Transaction
   fig_E3 — DAG Storage Growth over Time
 
-W1 Energy Model Fix:
-  The transmission energy coefficient 0.0008 µJ/byte is derived
-  from the physical link equation (not an empirical constant):
+Energy Model Architecture:
+  The transmission energy coefficient 0.0008 µJ/byte is strictly derived
+  from the physical link equation:
 
     E_byte = P_tx × (8 / R_tx)
            = 1×10⁻³ W × (8 / 10×10⁶ bps)
@@ -17,13 +17,10 @@ W1 Energy Model Fix:
   Physical interpretation:
     P_tx = 1 mW (0 dBm) — standard transmit power for low-power
     industrial edge protocols (IEEE 802.15.4, IEC 62591 WirelessHART).
-    This is the sensor-to-gateway short-range link budget.
-    The 5G NR backhaul operates at 200 mW (23 dBm) — that is a
-    different link (gateway-to-cloud) which is outside the ICS
-    sensor energy model scope.
+    This represents the sensor-to-gateway short-range link budget.
   Reference: IEEE Std 802.15.4-2020, Section 11.3 (PHY TX power)
 
-  Signing and verification energies are taken from pqm4 benchmarks
+  Signing and verification energies are based on pqm4 benchmarks
   (ARM Cortex-M4 @ 168 MHz, 40 nm process) and scaled to the
   Cortex-A76/A78 at 6 nm process node using a conservative 4×
   process efficiency improvement factor.
@@ -58,7 +55,7 @@ M_WINDOW_REF = 5
 N_RANGE      = np.array([10, 25, 50, 100, 200, 300, 500, 750, 1000])
 SIM_MINUTES  = 60
 
-# ── W1 corrected energy coefficient ──────────────────────────────
+# ── Transmission energy coefficient ──────────────────────────────
 # Physical derivation:
 #   E_byte = P_tx × (8 bits per byte / channel_rate)
 #   P_tx   = 1 mW = 1e-3 W  (0 dBm, IEEE 802.15.4 industrial edge)
@@ -92,16 +89,11 @@ def energy_per_tx(sid, t_sign_ms, t_verify_ms, sig_bytes, M=1):
 
     The three-component model separates:
       E_sign:  signing energy amortised over M transactions
-               (only one signing per M sensor samples in PQ-TDAG)
       E_ver:   verification energy amortised over M transactions
-      E_tx:    physical transmission energy using the W1-corrected
-               formula E_byte = P_tx × (8/R_tx)
+      E_tx:    physical transmission energy
 
     E_sign and E_ver are scaled from pqm4 M4 reference values
-    using time-proportional scaling:
-      E_device = E_m4 × (t_device / t_m4) / process_efficiency
-    This is physically motivated: both platforms run the same
-    NTT operations, the faster device does them with less leakage.
+    using time-proportional scaling.
     """
     e_s, e_v, t_m4 = PQM4.get(sid, (8.4, 0.315, 10.0))
     # scale signing energy by observed time ratio
@@ -188,11 +180,11 @@ def plot_E1(schemes):
 
 
 # ══════════════════════════════════════════════════════════════
-#  FIGURE E2 — Energy per Transaction (W1 corrected)
+#  FIGURE E2 — Energy per Transaction
 # ══════════════════════════════════════════════════════════════
 
 def plot_E2(schemes):
-    print("  Plotting fig_E2: Energy per Transaction (W1 corrected)...")
+    print("  Plotting fig_E2: Energy per Transaction...")
 
     ORDER = ["ecdsa","pq_tdag","naive_mldsa44","falcon512",
              "mldsa65","slhdsa128f","xmssmt","slhdsa128s"]
@@ -235,7 +227,6 @@ def plot_E2(schemes):
                   f"($P_{{tx}}=1$~mW, IEEE~802.15.4)"),
            ylim=(0, max(totals)*1.18))
 
-    # Annotate the physical derivation in a text box
     ax.text(0.01, 0.97,
             f"$E_{{byte}} = 1\\,\\mathrm{{mW}} \\times 8/{R_TX_BPS/1e6:.0f}\\,\\mathrm{{Mbps}} = {E_BYTE_UJ}\\,\\mu$J/byte",
             transform=ax.transAxes, fontsize=8, va="top",
@@ -245,7 +236,6 @@ def plot_E2(schemes):
     plt.tight_layout()
     save(fig, "fig_E2_energy_per_tx")
 
-    # Print breakdown table — useful for paper verification
     print()
     print(f"    Energy breakdown — E_byte={E_BYTE_UJ} µJ/byte "
           f"(P_tx={P_TX_W*1000:.0f}mW, R_tx={R_TX_BPS/1e6:.0f}Mbps):")
@@ -305,7 +295,7 @@ def plot_E3(schemes):
 def main():
     print()
     print("=" * 60)
-    print("  PQ-TDAG — Group E: Resource Figures (W1 corrected)")
+    print("  PQ-TDAG — Group E: Resource Figures")
     print(f"  E_byte = P_tx×8/R_tx = {P_TX_W*1000:.0f}mW × 8/{R_TX_BPS/1e6:.0f}Mbps"
           f" = {E_BYTE_UJ} µJ/byte")
     print("=" * 60 + "\n")

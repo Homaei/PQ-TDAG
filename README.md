@@ -367,6 +367,25 @@ Eight schemes are evaluated. The selection is deliberate.
 
 ---
 
+## Reproducibility — Google Colab
+
+All figures in the paper can be reproduced without installing liboqs or NS-3 by running the provided Colab notebook against 
+the pre-computed experimental data.
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/your-org/pq-tdag/blob/main/PQ_TDAG_Colab.ipynb)
+
+**Steps:**
+1. Open `PQ_TDAG_Colab.ipynb` in Google Colab
+2. Upload `PQ-TDAG-main.zip` when prompted (Cell 1)
+3. Run all cells — figures save to `results/figures/`
+4. Last cell downloads all PDFs as a single zip
+
+**Figures generated:** A1, A2, A3, A4, B1, B2, C1, C2, 
+D1, D4, E2, sensitivity_tpipe  
+**Runtime:** ~30 seconds  
+**No GPU required**
+
+---
 ## Citation
 
 If you use this code or results, please cite:

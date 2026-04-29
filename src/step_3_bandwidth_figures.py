@@ -8,9 +8,9 @@ Group A: Bandwidth & Feasibility Figures
   fig_A4 — W3 fix: Scheme-agnostic micro-chaining comparison
            Shows Falcon-512+M=2 vs PQ-TDAG(ML-DSA+M=5) on all metrics
 
-W3 Fix:
+Fix:
   Falcon-512 with M=2 achieves lower bandwidth (3.07 Mbps) than
-  PQ-TDAG (4.67 Mbps), which a reviewer noted as a missing comparison.
+  PQ-TDAG (4.67 Mbps).
 
   We address this by showing the micro-chain is scheme-agnostic,
   but ML-DSA-44 remains the optimal choice because:

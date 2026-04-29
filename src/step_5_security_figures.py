@@ -2,25 +2,18 @@
 src/step_5_security_figures.py
 ───────────────────────────────────────────────────────────────────
 Group D: Security Figures
-  fig_D1 — Byzantine Robustness (extended to n=3,5,7,9 per W6 fix)
+  fig_D1 — Byzantine Robustness
   fig_D2 — TBFR vs Standard ARQ Recovery
   fig_D3 — Attack Success Probability vs M (Theorem 1)
-  fig_D4 — W6 fix: Byzantine threshold table for different n values
+  fig_D4 — Byzantine threshold table for different deployment scales
 
-W6 Fix:
-  The original evaluation used n=9 gateways (|F|_max=2).
-  A reviewer correctly noted that real ICS deployments often
-  use n=3 gateways, where the Byzantine threshold degrades to
-  |F|_max=0 — effectively CFT (Crash-Fault Tolerant) rather
-  than BFT (Byzantine-Fault Tolerant).
-
-  We address this by:
-  1. Extending the Byzantine simulation to n ∈ {3, 5, 7, 9}
-  2. Showing that n≥4 is required for any Byzantine tolerance
-  3. Adding a deployment recommendation table to the paper
-
-  The key result: for n=3, PQ-TDAG is CFT-only, and operators
-  requiring BFT must deploy n≥7 gateways (tolerates 2 faulty nodes).
+Deployment Scale Analysis:
+  Industrial environments feature heterogeneous deployment topologies.
+  While large deployments support robust Byzantine Fault Tolerance (BFT),
+  minimal cell deployments (e.g., n=3 gateways) structurally degrade to
+  Crash-Fault Tolerance (CFT) due to the n/3 threshold limitation.
+  We evaluate the system behavior across cluster sizes n ∈ {3, 5, 7, 9}
+  to provide operational guidelines.
 """
 
 import json
@@ -58,11 +51,11 @@ M_RANGE     = list(range(1, 21))
 PE_RANGE    = np.linspace(0.0, 0.25, 40)
 rng         = np.random.default_rng(42)
 
-# W6: gateway cluster sizes to evaluate
+# Gateway cluster sizes to evaluate
 # n=3: minimal deployment (many small ICS cells)
 # n=5: small deployment
 # n=7: minimum for 2-fault BFT
-# n=9: our primary evaluation (as in paper)
+# n=9: baseline performance evaluation
 GATEWAY_SIZES = [3, 5, 7, 9]
 
 
@@ -82,16 +75,12 @@ def save(fig, name):
 
 
 # ══════════════════════════════════════════════════════════════
-#  W6: Byzantine simulation for multiple n values
+#  Byzantine simulation for multiple cluster sizes
 # ══════════════════════════════════════════════════════════════
 
 def byzantine_threshold(n: int) -> int:
     """
     BFT threshold: floor((n-1)/3)
-    This is the classic Castro-Liskov PBFT bound.
-    For n=3: floor(2/3) = 0 → CFT only, not BFT
-    For n=4: floor(3/3) = 1 → tolerates 1 Byzantine
-    For n=7: floor(6/3) = 2 → tolerates 2 Byzantine
     """
     return (n - 1) // 3
 
@@ -101,9 +90,6 @@ def simulate_dag_integrity(n_gateways: int, byz_ratio: float,
     """
     Simulates DAG integrity under Byzantine attacks for a given
     gateway cluster size n and Byzantine ratio.
-
-    Returns integrity rate, equivocation detection time, and
-    whether the cluster is operating in BFT or CFT mode.
     """
     n_byzantine = int(n_gateways * byz_ratio)
     byz_thresh  = byzantine_threshold(n_gateways)
@@ -122,13 +108,11 @@ def simulate_dag_integrity(n_gateways: int, byz_ratio: float,
             if n_byzantine > 0 and rng_local.random() < 0.15:
                 attack = rng_local.integers(3)
                 if attack == 0:
-                    # Equivocation
                     if is_bft:
                         detect_t = T_RTX_MS + rng_local.exponential(1.0)
                         detect_times_ms.append(detect_t)
                     total_txs += 1
                 elif attack == 1:
-                    # Selective drop
                     detect_t = 1.0 + rng_local.exponential(0.5)
                     detect_times_ms.append(detect_t)
                     total_txs += 1
@@ -156,7 +140,7 @@ def simulate_dag_integrity(n_gateways: int, byz_ratio: float,
 
 
 def plot_D1_byzantine(n_gateways: int = 9):
-    """Byzantine robustness for the primary n=9 evaluation."""
+    """Byzantine robustness for the primary evaluation scenario."""
     print(f"  Plotting fig_D1: Byzantine Robustness (n={n_gateways})...")
 
     results = []
@@ -167,7 +151,7 @@ def plot_D1_byzantine(n_gateways: int = 9):
     integ_means = [r["integrity_mean"] * 100 for r in results]
     integ_stds  = [r["integrity_std"] * 100 for r in results]
     detect_ms   = [r["detect_ms_mean"] for r in results]
-    thresh_pct  = 100.0 / 3.0   # n/3 threshold in %
+    thresh_pct  = 100.0 / 3.0
 
     bar_colors = ["#2A9D8F" if r["byz_ratio"] < 1/3
                   else "#E63946" for r in results]
@@ -210,23 +194,13 @@ def plot_D1_byzantine(n_gateways: int = 9):
 
 def plot_D4_byzantine_vs_n():
     """
-    W6 fix: Byzantine fault tolerance across gateway cluster sizes.
-
-    This figure directly answers the reviewer's concern about n=3
-    deployments. It shows:
-      - BFT threshold |F|_max for each n
-      - Which mode the system operates in (BFT vs CFT)
-      - Deployment recommendation for plant operators
+    Byzantine fault tolerance behavior across varied gateway cluster sizes.
     """
-    print("  Plotting fig_D4: Byzantine threshold vs n (W6 fix)...")
+    print("  Plotting fig_D4: Byzantine threshold vs n...")
 
-    # Simulate integrity at the n/3 threshold for each cluster size
-    # (this is the operating point where BFT is just barely maintained)
     cluster_data = []
     for n in GATEWAY_SIZES:
         thresh    = byzantine_threshold(n)
-        ratio_at_thresh = thresh / n if thresh > 0 else 0.0
-        # Simulate at threshold - 1 (within BFT), at threshold, and at threshold + 1
         rows = []
         for n_byz in range(0, min(n, thresh + 2)):
             ratio = n_byz / n
@@ -236,14 +210,13 @@ def plot_D4_byzantine_vs_n():
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
     fig.suptitle(
-        "W6: Byzantine Fault Tolerance vs. Gateway Cluster Size\n"
+        "Byzantine Fault Tolerance vs. Gateway Cluster Size\n"
         "Deployment recommendations for ICS operators",
         fontsize=10, y=1.02
     )
 
     CLUSTER_COLORS = ["#E63946", "#F4A261", "#2A9D8F", "#457B9D"]
 
-    # Panel (a): Integrity vs Byzantine count for each n
     ax = axes[0]
     for cd, color in zip(cluster_data, CLUSTER_COLORS):
         n      = cd["n"]
@@ -265,7 +238,6 @@ def plot_D4_byzantine_vs_n():
            ylim=(78, 102))
     ax.legend(fontsize=8.5)
 
-    # Panel (b): Deployment recommendation table as heatmap
     ax = axes[1]
     ax.axis("off")
 
@@ -291,7 +263,6 @@ def plot_D4_byzantine_vs_n():
     table.auto_set_font_size(False)
     table.set_fontsize(9)
 
-    # Color rows: red for CFT-only, yellow for limited BFT, green for good
     for i, cd in enumerate(cluster_data):
         thresh = cd["threshold"]
         color  = ("#ffcccc" if thresh == 0 else
@@ -303,22 +274,6 @@ def plot_D4_byzantine_vs_n():
 
     plt.tight_layout()
     save(fig, "fig_D4_byzantine_vs_n")
-
-    # Print the key finding for paper text
-    print()
-    print("    W6 Key Numbers for paper §5.5:")
-    for cd in cluster_data:
-        n, thresh = cd["n"], cd["threshold"]
-        mode = "BFT" if thresh > 0 else "CFT-only"
-        print(f"    n={n}: |F|_max={thresh}, mode={mode}")
-    print()
-    print("    Paper text (§5.5, Byzantine section):")
-    print('    "While our evaluation uses n=9 gateways (|F|_max=2),')
-    print('     constrained ICS cells often deploy n=3 gateways.')
-    print('     For n=3, the BFT threshold evaluates to |F|_max=0:')
-    print('     PQ-TDAG operates in CFT mode, not BFT mode.')
-    print('     Plant operators requiring strict BFT must mandate')
-    print('     n≥4 gateways (1-fault tolerance) or n≥7 (2-fault)."')
 
 
 # ══════════════════════════════════════════════════════════════
@@ -402,7 +357,7 @@ def plot_D3_attack_vs_m():
 def main():
     print()
     print("=" * 60)
-    print("  PQ-TDAG — Group D: Security Figures + W6 fix")
+    print("  PQ-TDAG — Group D: Security Figures")
     print("=" * 60 + "\n")
 
     plot_D1_byzantine(n_gateways=9)

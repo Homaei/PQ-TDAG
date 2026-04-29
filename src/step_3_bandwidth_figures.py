@@ -5,21 +5,17 @@ Group A: Bandwidth & Feasibility Figures
   fig_A1 — Required BW vs Sampling Frequency
   fig_A2 — Required BW vs Number of Sensors
   fig_A3 — M_min vs B_max (Corollary 1)
-  fig_A4 — W3 fix: Scheme-agnostic micro-chaining comparison
+  fig_A4 — Scheme-agnostic micro-chaining comparison
            Shows Falcon-512+M=2 vs PQ-TDAG(ML-DSA+M=5) on all metrics
 
-Fix:
-  Falcon-512 with M=2 achieves lower bandwidth (3.07 Mbps) than
-  PQ-TDAG (4.67 Mbps).
-
-  We address this by showing the micro-chain is scheme-agnostic,
-  but ML-DSA-44 remains the optimal choice because:
-    1. Falcon-512 + M=2: energy = 26.75 µJ/tx (14.7× more than PQ-TDAG)
-    2. Falcon-512 scalability ceiling: N=100 (PQ-TDAG: N≥1000)
-    3. Falcon-512 Gaussian sampler is expensive on ARM sensors
-
-  The comparison STRENGTHENS the paper: micro-chaining works universally,
-  but ML-DSA-44 is the optimal scheme for energy and scalability.
+Micro-chain scheme independence analysis:
+  We demonstrate that the micro-chain architecture is scheme-agnostic.
+  For example, Falcon-512 with M=2 achieves lower bandwidth (3.07 Mbps)
+  than PQ-TDAG with ML-DSA-44 (4.67 Mbps).
+  However, ML-DSA-44 remains the optimal choice because:
+    1. Falcon-512 + M=2 energy cost is 26.75 µJ/tx (14.7× more than ML-DSA)
+    2. Falcon-512 scalability ceiling is N=100 (ML-DSA supports N≥1000)
+    3. Floating-point Gaussian sampling in Falcon is suboptimal for ARM.
 """
 
 import json, sys
@@ -185,26 +181,16 @@ def plot_A3(schemes):
 
 
 # ══════════════════════════════════════════════════════════════
-#  FIGURE A4 — W3 fix: Scheme-agnostic micro-chain comparison
-#
-#  This figure directly addresses the reviewer's question:
-#  "Why is Falcon-512 + M>1 not compared?"
-#
-#  We show three dimensions simultaneously:
-#    (a) Bandwidth at different M values (Falcon vs ML-DSA)
-#    (b) Energy cost at optimal M (why ML-DSA is better)
-#    (c) Scalability ceiling at optimal M
+#  FIGURE A4 — Scheme-agnostic micro-chain comparison
 # ══════════════════════════════════════════════════════════════
 
 def plot_A4_falcon_analysis(schemes):
     """
-    W3 defense figure: Falcon-512 + M=2 vs PQ-TDAG (ML-DSA-44 + M=5).
-
-    The argument: micro-chaining is scheme-agnostic, BUT ML-DSA-44
-    at M=5 is better than Falcon-512 at M=2 on all metrics except
-    raw bandwidth. A fair comparison must show ALL three dimensions.
+    Falcon-512 + M=2 vs PQ-TDAG (ML-DSA-44 + M=5).
+    Demonstrates scheme independence of the micro-chain architecture
+    and justifies the selection of ML-DSA-44 based on energy and scalability.
     """
-    print("  Plotting fig_A4: Scheme-agnostic micro-chain (W3 fix)...")
+    print("  Plotting fig_A4: Scheme-agnostic micro-chain...")
 
     if "falcon512" not in schemes or "pq_tdag" not in schemes:
         print("    SKIP: falcon512 or pq_tdag not in timings")
@@ -216,7 +202,7 @@ def plot_A4_falcon_analysis(schemes):
     M_vals = np.arange(1, 11)
     fig, axes = plt.subplots(1, 3, figsize=(12, 4.5))
     fig.suptitle(
-        "W3: Micro-Chaining is Scheme-Agnostic — "
+        "Micro-Chaining is Scheme-Agnostic — "
         "Falcon-512 vs. ML-DSA-44 at Different $M$ Values\n"
         f"$N={N_REF}$, $f={F_REF}$ Hz, $B_{{\\max}}={B_MAX_MBPS}$ Mbps",
         fontsize=10, y=1.02
@@ -234,7 +220,6 @@ def plot_A4_falcon_analysis(schemes):
     ax.axhline(B_MAX_MBPS, color="red", linestyle="-.", linewidth=1.2,
                label=f"$B_{{\\max}}={B_MAX_MBPS}$ Mbps")
 
-    # Annotate the key operating points
     bw_f2  = bw_pq(N_REF, F_REF, falcon_sig, 2)
     bw_m5  = bw_pq(N_REF, F_REF, mldsa_sig,  5)
     ax.annotate(f"Falcon $M=2$\n{bw_f2:.2f} Mbps",
@@ -254,17 +239,12 @@ def plot_A4_falcon_analysis(schemes):
 
     # ── Panel (b): Energy per transaction vs M ────────────────
     ax = axes[1]
-
-    # Energy model coefficients from pqm4
-    # Falcon-512: E_sign = 26.6 µJ (M4), high due to NTRU Gaussian sampler
-    # ML-DSA-44:  E_sign =  8.4 µJ (M4), cheaper NTT operations
-    E_BYTE = 0.0008  # µJ/byte (W1 corrected)
+    E_BYTE = 0.0008  # µJ/byte
     PROC_EFF = 4.0
 
     def E_tx_scheme(sig, M):
         return E_BYTE * (S_PAYLOAD + sig / M)
 
-    # Scale from pqm4 reference (Cortex-M4) to ARM A76
     t_sign_f = schemes["falcon512"].get("t_sign_mean_ms", 0.117)
     t_sign_m = schemes["pq_tdag"].get("t_sign_mean_ms", 0.044)
     t_ver_f  = schemes["falcon512"].get("t_verify_mean_ms", 0.022)
@@ -275,17 +255,14 @@ def plot_A4_falcon_analysis(schemes):
     E_ver_f  =  0.07 * (t_ver_f / (12.0 * 0.07/26.6)) / PROC_EFF
     E_ver_m  =  0.315* (t_ver_m / (10.0 * 0.315/8.4)) / PROC_EFF
 
-    e_falcon = [E_sign_f/M + E_ver_f/M + E_tx_scheme(falcon_sig, M)
-                for M in M_vals]
-    e_mldsa  = [E_sign_m/M + E_ver_m/M + E_tx_scheme(mldsa_sig,  M)
-                for M in M_vals]
+    e_falcon = [E_sign_f/M + E_ver_f/M + E_tx_scheme(falcon_sig, M) for M in M_vals]
+    e_mldsa  = [E_sign_m/M + E_ver_m/M + E_tx_scheme(mldsa_sig,  M) for M in M_vals]
 
     ax.plot(M_vals, e_falcon, color=co("falcon512"), marker="^",
             linewidth=2.0, markersize=6, label="Falcon-512")
     ax.plot(M_vals, e_mldsa,  color=co("pq_tdag"), marker="o",
             linewidth=2.5, markersize=7, label="ML-DSA-44 (PQ-TDAG)")
 
-    # Annotate the key operating points
     e_f2 = E_sign_f/2 + E_ver_f/2 + E_tx_scheme(falcon_sig, 2)
     e_m5 = E_sign_m/5 + E_ver_m/5 + E_tx_scheme(mldsa_sig,  5)
     ratio = e_f2 / e_m5
@@ -306,8 +283,6 @@ def plot_A4_falcon_analysis(schemes):
 
     # ── Panel (c): Scalability ceiling vs M ──────────────────
     ax = axes[2]
-
-    # Scalability ceiling = max N before bandwidth collapse
     N_test = np.arange(5, 1001, 5)
 
     def max_N(sig, M):
@@ -341,30 +316,11 @@ def plot_A4_falcon_analysis(schemes):
     plt.tight_layout()
     save(fig, "fig_A4_scheme_agnostic_comparison")
 
-    # Print the key numbers for paper
-    print()
-    print("    W3 Key Numbers for paper §5.2:")
-    print(f"    Falcon-512 + M=2: B_req={bw_f2:.2f} Mbps, "
-          f"E={e_f2:.2f} µJ, N_max={ceiling_f[1]}")
-    print(f"    ML-DSA-44  + M=5: B_req={bw_m5:.2f} Mbps, "
-          f"E={e_m5:.2f} µJ, N_max={ceiling_m[4]}")
-    print(f"    Energy ratio: {ratio:.1f}×  "
-          f"Scalability ratio: {ceiling_m[4]/max(ceiling_f[1],1):.1f}×")
-    print()
-    print("    Paper text (§5.2, Falcon analysis):")
-    print(f'    "Applying PQ-TDAG to Falcon-512 with M=2 yields')
-    print(f'     B_req = {bw_f2:.2f} Mbps — lower than PQ-TDAG (ML-DSA, M=5)')
-    print(f'     at {bw_m5:.2f} Mbps. However, Falcon-512 at M=2 imposes')
-    print(f'     a {ratio:.1f}× energy penalty ({e_f2:.2f} µJ vs {e_m5:.2f} µJ)')
-    print(f'     and hits its scalability ceiling at N={ceiling_f[1]}.')
-    print(f'     ML-DSA-44 remains the optimal scheme when energy')
-    print(f'     and scalability beyond N=100 are required."')
-
 
 def main():
     print()
     print("=" * 60)
-    print("  PQ-TDAG — Group A: Bandwidth Figures + W3 fix")
+    print("  PQ-TDAG — Group A: Bandwidth Figures")
     print("=" * 60 + "\n")
 
     schemes = load_timings()
@@ -377,7 +333,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("  DONE — Group A + W3 figures saved.")
+    print("  DONE — Group A figures saved.")
     print("=" * 60)
 
 

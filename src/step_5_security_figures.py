@@ -1,20 +1,29 @@
 """
-step_5_group_D_security.py
-══════════════════════════════════════════════════════════════════
-Group D: Security & Byzantine Figures (Python simulation layer)
-  fig_D1 — Byzantine Robustness: DAG Integrity vs Attack Ratio
-  fig_D2 — TBFR vs Standard ARQ: Recovery Time vs p_e
-  fig_D3 — Attack Success Probability vs Window Size M
+src/step_5_security_figures.py
+───────────────────────────────────────────────────────────────────
+Group D: Security Figures
+  fig_D1 — Byzantine Robustness (extended to n=3,5,7,9 per W6 fix)
+  fig_D2 — TBFR vs Standard ARQ Recovery
+  fig_D3 — Attack Success Probability vs M (Theorem 1)
+  fig_D4 — W6 fix: Byzantine threshold table for different n values
 
-Note: fig_D1 will be enhanced with NS-3 data when available.
-      This script generates the analytical + Python-sim baseline.
+W6 Fix:
+  The original evaluation used n=9 gateways (|F|_max=2).
+  A reviewer correctly noted that real ICS deployments often
+  use n=3 gateways, where the Byzantine threshold degrades to
+  |F|_max=0 — effectively CFT (Crash-Fault Tolerant) rather
+  than BFT (Byzantine-Fault Tolerant).
 
-Run:
-  python3 src/step_5_group_D_security.py
-══════════════════════════════════════════════════════════════════
+  We address this by:
+  1. Extending the Byzantine simulation to n ∈ {3, 5, 7, 9}
+  2. Showing that n≥4 is required for any Byzantine tolerance
+  3. Adding a deployment recommendation table to the paper
+
+  The key result: for n=3, PQ-TDAG is CFT-only, and operators
+  requiring BFT must deploy n≥7 gateways (tolerates 2 faulty nodes).
 """
 
-import json, sys, random
+import json
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -25,299 +34,107 @@ from tqdm import tqdm
 ROOT        = Path(__file__).parent.parent
 DATA_FILE   = ROOT / "results/data/crypto_timings.json"
 FIGURES_DIR = ROOT / "results/figures"
-DATA_DIR    = ROOT / "results/data"
+LOGS_DIR    = ROOT / "results/logs"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 plt.rcParams.update({
-    "font.family":    "serif",
-    "font.size":      11,
-    "axes.labelsize": 12,
-    "axes.titlesize": 12,
-    "legend.fontsize":9.5,
-    "xtick.labelsize":10,
-    "ytick.labelsize":10,
-    "figure.dpi":     150,
-    "axes.grid":      True,
-    "grid.alpha":     0.35,
-    "grid.linestyle": "--",
-    "lines.linewidth":1.8,
-    "lines.markersize":7,
+    "font.family": "serif", "font.size": 11,
+    "axes.labelsize": 12, "axes.titlesize": 11,
+    "legend.fontsize": 9, "xtick.labelsize": 10,
+    "ytick.labelsize": 10, "figure.dpi": 150,
+    "axes.grid": True, "grid.alpha": 0.35, "grid.linestyle": "--",
+    "lines.linewidth": 1.8, "lines.markersize": 6,
 })
 
-# ── System parameters ─────────────────────────────────────────
-N_GATEWAYS      = 9      # total gateways (|F| < n/3 → max 2 Byzantine)
-T_MAX_MS        = 50.0
-T_PIPE_WORST_MS = 1.0
-T_SIGN_MS       = 1.20
-T_TIP_MS        = 0.50
-T_NACK_MS       = 0.80   # one-way NACK propagation
-T_RTX_MS        = 3 * T_PIPE_WORST_MS   # = 3ms from Eq.(t_RTX)
-GAMMA_REQ       = 1 - 1e-5
-N_RUNS          = 200    # Monte Carlo iterations
-M_BAR           = int((T_MAX_MS - T_SIGN_MS - T_TIP_MS) / T_PIPE_WORST_MS)
-M_RANGE         = list(range(1, 21))
-PE_RANGE        = np.linspace(0.0, 0.25, 40)
-BYZ_RATIOS      = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.33]
-rng             = np.random.default_rng(42)
+T_MAX_MS    = 50.0
+T_RTX_MS    = 3.0
+T_SIGN_MS   = 0.0436
+T_TIP_MS    = 0.5
+GAMMA_REQ   = 1 - 1e-5
+BYZ_RATIOS  = [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.33]
+N_MONTE_CARLO = 200
+M_RANGE     = list(range(1, 21))
+PE_RANGE    = np.linspace(0.0, 0.25, 40)
+rng         = np.random.default_rng(42)
+
+# W6: gateway cluster sizes to evaluate
+# n=3: minimal deployment (many small ICS cells)
+# n=5: small deployment
+# n=7: minimum for 2-fault BFT
+# n=9: our primary evaluation (as in paper)
+GATEWAY_SIZES = [3, 5, 7, 9]
 
 
-def load_timings():
-    if not DATA_FILE.exists():
-        print(f"ERROR: {DATA_FILE} not found. Run Step 2 first.")
-        sys.exit(1)
-    with open(DATA_FILE) as f:
-        data = json.load(f)
-    return data["schemes"]
+def co(sid):
+    COLORS = {"pq_tdag":"#E63946","naive_mldsa44":"#F4A261","mldsa65":"#457B9D",
+              "falcon512":"#2A9D8F","slhdsa128s":"#6A4C93","slhdsa128f":"#9B59B6",
+              "xmssmt":"#1D3557","ecdsa":"#A8DADC"}
+    return COLORS.get(sid, "#888")
 
 
-# ══════════════════════════════════════════════════════════════
-#  FIGURE D3 — Attack Success Probability vs M
-#  Validates Theorem 1 empirically
-# ══════════════════════════════════════════════════════════════
-def attack_success_prob_analytical(M, n_hash_bits=256):
-    """
-    P(attack) for internal node replacement.
-    Bounded by Grover: O(2^{n/2}).
-    For paper: show this goes to 0 as M increases (more links to break).
-    """
-    # Each additional internal node adds one hash pre-image requirement.
-    # P_attack ≤ (M-1) × 2^{-n/2}
-    return (M - 1) * (2 ** (-(n_hash_bits / 2)))
-
-
-def attack_success_empirical(M, n_runs=5000, forge_prob_per_node=1e-38):
-    """
-    Monte Carlo: adversary attempts to replace one internal node
-    in a chain of length M. Must find a hash pre-image for each
-    subsequent node. With 256-bit SHA3, this is computationally
-    negligible but we model it to validate structure.
-    """
-    successes = 0
-    for _ in range(n_runs):
-        # Adversary picks a random internal position k in [1, M-1]
-        # Must produce valid hash chain from k to M
-        k = rng.integers(1, max(M, 2))
-        links_to_forge = M - k
-        # Each link requires breaking a hash pre-image
-        p_forge_chain = forge_prob_per_node ** links_to_forge
-        if rng.random() < p_forge_chain:
-            successes += 1
-    return successes / n_runs
-
-
-def plot_D3_attack_vs_m():
-    print("  Plotting fig_D3: Attack Success Probability vs M...")
-
-    analytical = [attack_success_prob_analytical(m) for m in M_RANGE]
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-
-    ax.semilogy(M_RANGE, analytical, color="#E63946", linewidth=2.5,
-                marker="o", markersize=6, label="Analytical bound (Theorem 1)")
-
-    # Reference lines
-    ax.axhline(1e-38, color="gray", linestyle=":", linewidth=1.0,
-               label="Computational security floor")
-    ax.axhline(1e-30, color="orange", linestyle="--", linewidth=1.0,
-               label="Quantum Grover bound ($2^{-128}$)")
-
-    ax.set_xlabel("Micro-chain Window Size $M$")
-    ax.set_ylabel("Attack Success Probability $P_{attack}$")
-    ax.set_title("(D3) Attack Success Probability vs. Window Size $M$\n"
-                 "Internal Node Replacement (Theorem 1, Case 2)")
-    ax.set_xlim(1, max(M_RANGE))
-    ax.legend(fontsize=9)
-
-    out = FIGURES_DIR / "fig_D3_attack_vs_m.pdf"
-    plt.tight_layout()
-    plt.savefig(out, bbox_inches="tight", dpi=300)
-    plt.savefig(str(out).replace(".pdf", ".png"), dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"    Saved: {out}")
+def save(fig, name):
+    for ext in ["pdf", "png"]:
+        fig.savefig(FIGURES_DIR / f"{name}.{ext}",
+                    bbox_inches="tight", dpi=300)
+    plt.close(fig)
+    print(f"    Saved: {FIGURES_DIR / name}.pdf")
 
 
 # ══════════════════════════════════════════════════════════════
-#  FIGURE D2 — TBFR vs Standard ARQ
+#  W6: Byzantine simulation for multiple n values
 # ══════════════════════════════════════════════════════════════
-def tbfr_recovery_ms(pe, M=M_BAR, r_max=None):
+
+def byzantine_threshold(n: int) -> int:
     """
-    Worst-case recovery time with TBFR.
-    Eq. L_worst = t_sign + t_tip + M*t_pipe + r_max*t_RTX
+    BFT threshold: floor((n-1)/3)
+    This is the classic Castro-Liskov PBFT bound.
+    For n=3: floor(2/3) = 0 → CFT only, not BFT
+    For n=4: floor(3/3) = 1 → tolerates 1 Byzantine
+    For n=7: floor(6/3) = 2 → tolerates 2 Byzantine
     """
-    if r_max is None:
-        # From Eq. r_max formula
-        if pe <= 0:
-            r_max = 0
-        else:
-            try:
-                import math
-                val = math.log((1 - GAMMA_REQ) / max(M - 1, 1)) / math.log(pe) - 1
-                r_max = max(0, int(np.ceil(val)))
-            except (ValueError, ZeroDivisionError):
-                r_max = 0
-
-    return T_SIGN_MS + T_TIP_MS + M * T_PIPE_WORST_MS + r_max * T_RTX_MS
+    return (n - 1) // 3
 
 
-def arq_recovery_ms(pe, M=5):
+def simulate_dag_integrity(n_gateways: int, byz_ratio: float,
+                            n_sensors: int = 50, sim_steps: int = 300) -> dict:
     """
-    Standard ARQ: retransmit until success.
-    Expected retransmissions per packet: pe / (1-pe).
-    For M-1 internal nodes, total RTT:
+    Simulates DAG integrity under Byzantine attacks for a given
+    gateway cluster size n and Byzantine ratio.
+
+    Returns integrity rate, equivocation detection time, and
+    whether the cluster is operating in BFT or CFT mode.
     """
-    if pe >= 1:
-        return float("inf")
-    expected_rtx_per_pkt = pe / (1 - pe)
-    total_rtx_time = (M - 1) * expected_rtx_per_pkt * T_RTX_MS
-    base_time = T_SIGN_MS + T_TIP_MS + M * T_PIPE_WORST_MS
-    return base_time + total_rtx_time
+    n_byzantine = int(n_gateways * byz_ratio)
+    byz_thresh  = byzantine_threshold(n_gateways)
+    is_bft      = (n_byzantine < byz_thresh) and (byz_thresh > 0)
+    is_cft      = (n_byzantine == 0) and (byz_thresh == 0)
 
+    integrity_rates  = []
+    detect_times_ms  = []
 
-def tbfr_success_rate(pe, M=5):
-    """P(recovery within T_max) using TBFR."""
-    import math
-    if pe <= 0:
-        return 1.0
-    try:
-        r_budget = int((T_MAX_MS - T_SIGN_MS - T_TIP_MS
-                        - M * T_PIPE_WORST_MS) / T_RTX_MS)
-        r_budget = max(0, r_budget)
-        if M <= 1:
-            return 1.0
-        p_fail = (M - 1) * (pe ** (r_budget + 1))
-        return max(0.0, min(1.0, 1.0 - p_fail))
-    except Exception:
-        return 0.0
-
-
-def plot_D2_tbfr_vs_arq():
-    print("  Plotting fig_D2: TBFR vs ARQ...")
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
-    colors = {"M=3": "#2A9D8F", "M=5": "#E63946", "M=8": "#457B9D"}
-    M_vals = [3, 5, 8]
-
-    # ── Left: Recovery time ───────────────────────────────────
-    for M_val in M_vals:
-        tbfr_times = [tbfr_recovery_ms(pe, M=M_val) for pe in PE_RANGE]
-        arq_times  = [arq_recovery_ms(pe, M=M_val) for pe in PE_RANGE]
-
-        color = list(colors.values())[M_vals.index(M_val)]
-        ax1.plot(PE_RANGE * 100, tbfr_times, color=color,
-                 linewidth=2.0, label=f"TBFR $M={M_val}$")
-        ax1.plot(PE_RANGE * 100, arq_times, color=color,
-                 linewidth=1.5, linestyle="--",
-                 label=f"ARQ $M={M_val}$")
-
-    ax1.axhline(T_MAX_MS, color="red", linestyle="-.", linewidth=1.5,
-                label=f"$T_{{max}}={T_MAX_MS}$ ms")
-    ax1.set_xlabel("Erasure Probability $p_e$ (%)")
-    ax1.set_ylabel("Recovery Latency (ms)")
-    ax1.set_title("(D2a) Worst-case Recovery Time\nTBFR vs. Standard ARQ")
-    ax1.set_xlim(0, 25)
-    ax1.set_ylim(0, T_MAX_MS * 2)
-    ax1.legend(fontsize=8, ncol=2, framealpha=0.9)
-
-    # ── Right: Success rate ───────────────────────────────────
-    for M_val in M_vals:
-        rates = [tbfr_success_rate(pe, M=M_val) * 100 for pe in PE_RANGE]
-        color = list(colors.values())[M_vals.index(M_val)]
-        ax2.plot(PE_RANGE * 100, rates, color=color,
-                 linewidth=2.0, label=f"TBFR $M={M_val}$")
-
-    ax2.axhline(GAMMA_REQ * 100, color="red", linestyle="-.", linewidth=1.5,
-                label=f"$\\gamma_{{req}}$ = {GAMMA_REQ*100:.4f}%")
-    ax2.set_xlabel("Erasure Probability $p_e$ (%)")
-    ax2.set_ylabel("Recovery Success Rate (%)")
-    ax2.set_title("(D2b) TBFR Recovery Success Rate\nvs. Erasure Probability")
-    ax2.set_xlim(0, 25)
-    ax2.set_ylim(99.0, 100.01)
-    ax2.legend(fontsize=9)
-
-    plt.tight_layout()
-    out = FIGURES_DIR / "fig_D2_tbfr_vs_arq.pdf"
-    plt.savefig(out, bbox_inches="tight", dpi=300)
-    plt.savefig(str(out).replace(".pdf", ".png"), dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"    Saved: {out}")
-
-
-# ══════════════════════════════════════════════════════════════
-#  FIGURE D1 — Byzantine Robustness
-#  Simulates DAG under Byzantine attacks using Monte Carlo
-# ══════════════════════════════════════════════════════════════
-class DAGNode:
-    __slots__ = ("node_id", "sensor_id", "seq", "is_terminal",
-                 "h_prev", "is_byzantine", "references")
-
-    def __init__(self, node_id, sensor_id, seq,
-                 is_terminal=False, h_prev=b"", is_byzantine=False):
-        self.node_id      = node_id
-        self.sensor_id    = sensor_id
-        self.seq          = seq
-        self.is_terminal  = is_terminal
-        self.h_prev       = h_prev
-        self.is_byzantine = is_byzantine
-        self.references   = []
-
-
-def simulate_byzantine_dag(n_gateways: int, byz_ratio: float,
-                           n_sensors: int = 50, sim_steps: int = 500,
-                           M: int = 5) -> dict:
-    """
-    Monte Carlo simulation of DAG integrity under Byzantine attack.
-    Returns: {integrity_rate, equivocation_detection_ms, 
-              selective_drop_detection_ms}
-    """
-    n_byzantine  = int(n_gateways * byz_ratio)
-    n_honest     = n_gateways - n_byzantine
-    byz_threshold= n_gateways // 3
-
-    integrity_rates     = []
-    detect_times_ms     = []
-    drop_detect_ms      = []
-
-    for run in range(N_RUNS):
-        rng_local  = np.random.default_rng(run + 1000)
+    for run in range(N_MONTE_CARLO):
+        rng_local  = np.random.default_rng(run * 100 + n_gateways)
         total_txs  = 0
         valid_txs  = 0
-        detect_times = []
 
         for step in range(sim_steps):
-            sensor_id  = step % n_sensors
-            is_terminal= (step % M == M - 1)
-
             if n_byzantine > 0 and rng_local.random() < 0.15:
-                # Byzantine behavior
                 attack = rng_local.integers(3)
-
                 if attack == 0:
-                    # Equivocation: broadcast two conflicting terminal nodes
-                    if n_honest >= 2 * n_byzantine + 1:
-                        # BFT: honest majority detects immediately
-                        detect_time = T_RTX_MS + rng_local.exponential(1.0)
-                        detect_times.append(detect_time)
-                        total_txs += 1
-                        # equivocated tx rejected — counts as failed
-                    else:
-                        total_txs += 1
-
+                    # Equivocation
+                    if is_bft:
+                        detect_t = T_RTX_MS + rng_local.exponential(1.0)
+                        detect_times_ms.append(detect_t)
+                    total_txs += 1
                 elif attack == 1:
-                    # Selective drop: withhold internal nodes
-                    # Honest gateway recomputes h_M → mismatch detected
-                    detect_time = T_PIPE_WORST_MS + rng_local.exponential(0.5)
-                    drop_detect_ms.append(detect_time)
+                    # Selective drop
+                    detect_t = 1.0 + rng_local.exponential(0.5)
+                    detect_times_ms.append(detect_t)
                     total_txs += 1
-                    # tx rejected
-
                 else:
-                    # Replay: rejected by h_prev check instantly
                     total_txs += 1
-                    # immediately rejected, not counted as valid
-
             else:
-                # Honest transaction
                 total_txs += 1
                 valid_txs += 1
 
@@ -325,114 +142,278 @@ def simulate_byzantine_dag(n_gateways: int, byz_ratio: float,
             integrity_rates.append(valid_txs / total_txs)
 
     return {
-        "integrity_mean":     np.mean(integrity_rates),
-        "integrity_std":      np.std(integrity_rates),
-        "equivoc_detect_ms":  np.mean(detect_times) if detect_times else 0.0,
-        "drop_detect_ms":     np.mean(drop_detect_ms) if drop_detect_ms else 0.0,
-        "is_feasible":        n_byzantine < byz_threshold,
+        "n_gateways":     n_gateways,
+        "byz_ratio":      byz_ratio,
+        "n_byzantine":    n_byzantine,
+        "byz_threshold":  byz_thresh,
+        "is_bft":         is_bft,
+        "is_cft":         is_cft,
+        "integrity_mean": float(np.mean(integrity_rates)) if integrity_rates else 0.0,
+        "integrity_std":  float(np.std(integrity_rates))  if integrity_rates else 0.0,
+        "detect_ms_mean": float(np.mean(detect_times_ms)) if detect_times_ms else 0.0,
+        "mode":           "BFT" if (is_bft or byz_thresh > 0) else "CFT",
     }
 
 
-def plot_D1_byzantine_robustness():
-    print("  Plotting fig_D1: Byzantine Robustness...")
-    print("    Running Monte Carlo (this takes ~30 seconds)...")
+def plot_D1_byzantine(n_gateways: int = 9):
+    """Byzantine robustness for the primary n=9 evaluation."""
+    print(f"  Plotting fig_D1: Byzantine Robustness (n={n_gateways})...")
 
-    results = {}
-    for ratio in tqdm(BYZ_RATIOS, desc="    Byzantine ratio"):
-        results[ratio] = simulate_byzantine_dag(
-            n_gateways=N_GATEWAYS,
-            byz_ratio=ratio,
-            n_sensors=50, sim_steps=500, M=5
-        )
+    results = []
+    for ratio in tqdm(BYZ_RATIOS, desc=f"    n={n_gateways} Byzantine"):
+        results.append(simulate_dag_integrity(n_gateways, ratio))
 
-    ratios          = list(results.keys())
-    integrity_means = [results[r]["integrity_mean"] * 100 for r in ratios]
-    integrity_stds  = [results[r]["integrity_std"] * 100  for r in ratios]
-    detect_ms       = [results[r]["equivoc_detect_ms"] for r in ratios]
-    feasible        = [results[r]["is_feasible"] for r in ratios]
+    ratios_pct  = [r["byz_ratio"] * 100 for r in results]
+    integ_means = [r["integrity_mean"] * 100 for r in results]
+    integ_stds  = [r["integrity_std"] * 100 for r in results]
+    detect_ms   = [r["detect_ms_mean"] for r in results]
+    thresh_pct  = 100.0 / 3.0   # n/3 threshold in %
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    bar_colors = ["#2A9D8F" if r["byz_ratio"] < 1/3
+                  else "#E63946" for r in results]
 
-    # ── Left: DAG integrity ───────────────────────────────────
-    colors_bar = ["#2A9D8F" if f else "#E63946" for f in feasible]
-    bars = ax1.bar(
-        [r * 100 for r in ratios],
-        integrity_means, 8.0,
-        yerr=integrity_stds, capsize=5,
-        color=colors_bar, edgecolor="black", linewidth=0.6,
-        error_kw={"linewidth": 1.2}
-    )
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
 
-    # Byzantine threshold line
-    ax1.axvline(33.3, color="red", linestyle="--", linewidth=1.8,
-                label="Byzantine threshold $n/3$ = 33.3%")
-    ax1.fill_betweenx([0, 105], 0, 33.3,
-                      alpha=0.06, color="green", label="Safe operating region")
-    ax1.fill_betweenx([0, 105], 33.3, 35,
-                      alpha=0.06, color="red")
-
-    ax1.set_xlabel("Byzantine Gateway Ratio (%)")
-    ax1.set_ylabel("DAG Integrity Rate (%)")
-    ax1.set_title("(D1a) DAG Integrity under Byzantine Attack\n"
-                  "PQ-TDAG ($n=9$ gateways, $M=5$)")
-    ax1.set_xlim(-2, 36)
-    ax1.set_ylim(85, 102)
+    ax1.bar(ratios_pct, integ_means, 4.5, color=bar_colors,
+            edgecolor="black", linewidth=0.5,
+            yerr=integ_stds, capsize=4,
+            error_kw={"linewidth": 1.0})
+    ax1.axvline(thresh_pct, color="#E63946", linestyle="--", linewidth=1.8,
+                label=f"BFT threshold $n/3 = {thresh_pct:.1f}\\%$")
+    ax1.fill_betweenx([80,102], 0, thresh_pct, alpha=0.05, color="#2A9D8F")
+    ax1.fill_betweenx([80,102], thresh_pct, 36, alpha=0.05, color="#E63946")
+    ax1.set(xlabel="Byzantine Gateway Ratio (\\%)",
+            ylabel="DAG Integrity Rate (\\%)",
+            title=f"(D1a) DAG Integrity ($n={n_gateways}$ gateways)",
+            xlim=(-1, 36), ylim=(80, 102))
     ax1.legend(fontsize=9)
 
-    # ── Right: Detection time ─────────────────────────────────
-    ax2.plot([r * 100 for r in ratios], detect_ms,
-             color="#E63946", marker="o", linewidth=2.0,
-             markersize=7, label="Equivocation detection time")
-
-    ax2.axvline(33.3, color="red", linestyle="--", linewidth=1.5,
-                label="Byzantine threshold 33.3%")
-    ax2.axhline(T_MAX_MS, color="black", linestyle="-.", linewidth=1.2,
-                label=f"$T_{{max}}={T_MAX_MS}$ ms")
-
-    ax2.set_xlabel("Byzantine Gateway Ratio (%)")
-    ax2.set_ylabel("Detection / Recovery Time (ms)")
-    ax2.set_title("(D1b) Equivocation Detection Time\nvs. Byzantine Ratio")
-    ax2.set_xlim(-2, 36)
+    ax2.plot(ratios_pct, detect_ms, color="#E63946", marker="o",
+             linewidth=2.0, markersize=7)
+    ax2.axvline(thresh_pct, color="#E63946", linestyle="--", linewidth=1.5)
+    ax2.axhline(T_MAX_MS, color="#888", linestyle="-.", linewidth=1.0,
+                label=f"$T_{{\\max}}={T_MAX_MS}$~ms")
+    ax2.set(xlabel="Byzantine Gateway Ratio (\\%)",
+            ylabel="Detection Time (ms)",
+            title="(D1b) Equivocation Detection",
+            xlim=(-1, 36))
     ax2.legend(fontsize=9)
 
     plt.tight_layout()
-    out = FIGURES_DIR / "fig_D1_byzantine_robustness.pdf"
-    plt.savefig(out, bbox_inches="tight", dpi=300)
-    plt.savefig(str(out).replace(".pdf", ".png"), dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"    Saved: {out}")
+    save(fig, "fig_D1_byzantine_robustness")
 
-    # Save data for NS-3 validation overlay
-    d_out = DATA_DIR / "byzantine_results.json"
-    with open(d_out, "w") as f:
-        json.dump({str(k): v for k, v in results.items()}, f, indent=2)
-    print(f"    Saved: {d_out}  ← will be overlaid with NS-3 data")
+    with open(LOGS_DIR / "byzantine_results.json", "w") as f:
+        json.dump({str(r["byz_ratio"]): r for r in results}, f, indent=2)
+
+    return results
+
+
+def plot_D4_byzantine_vs_n():
+    """
+    W6 fix: Byzantine fault tolerance across gateway cluster sizes.
+
+    This figure directly answers the reviewer's concern about n=3
+    deployments. It shows:
+      - BFT threshold |F|_max for each n
+      - Which mode the system operates in (BFT vs CFT)
+      - Deployment recommendation for plant operators
+    """
+    print("  Plotting fig_D4: Byzantine threshold vs n (W6 fix)...")
+
+    # Simulate integrity at the n/3 threshold for each cluster size
+    # (this is the operating point where BFT is just barely maintained)
+    cluster_data = []
+    for n in GATEWAY_SIZES:
+        thresh    = byzantine_threshold(n)
+        ratio_at_thresh = thresh / n if thresh > 0 else 0.0
+        # Simulate at threshold - 1 (within BFT), at threshold, and at threshold + 1
+        rows = []
+        for n_byz in range(0, min(n, thresh + 2)):
+            ratio = n_byz / n
+            r     = simulate_dag_integrity(n, ratio)
+            rows.append(r)
+        cluster_data.append({"n": n, "threshold": thresh, "rows": rows})
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    fig.suptitle(
+        "W6: Byzantine Fault Tolerance vs. Gateway Cluster Size\n"
+        "Deployment recommendations for ICS operators",
+        fontsize=10, y=1.02
+    )
+
+    CLUSTER_COLORS = ["#E63946", "#F4A261", "#2A9D8F", "#457B9D"]
+
+    # Panel (a): Integrity vs Byzantine count for each n
+    ax = axes[0]
+    for cd, color in zip(cluster_data, CLUSTER_COLORS):
+        n      = cd["n"]
+        thresh = cd["threshold"]
+        rows   = cd["rows"]
+        n_byz_vals = [r["n_byzantine"] for r in rows]
+        integ  = [r["integrity_mean"] * 100 for r in rows]
+        mode   = "BFT" if thresh > 0 else "CFT-only"
+        ax.plot(n_byz_vals, integ, color=color, marker="o",
+                linewidth=2.0, markersize=7,
+                label=f"$n={n}$ (|F|_max={thresh}, {mode})")
+        if thresh > 0:
+            ax.axvline(thresh + 0.5, color=color, linestyle=":",
+                       linewidth=0.8, alpha=0.5)
+
+    ax.set(xlabel="Number of Byzantine Gateways $|\\mathcal{F}|$",
+           ylabel="DAG Integrity Rate (\\%)",
+           title="(D4a) Integrity vs. Byzantine Count",
+           ylim=(78, 102))
+    ax.legend(fontsize=8.5)
+
+    # Panel (b): Deployment recommendation table as heatmap
+    ax = axes[1]
+    ax.axis("off")
+
+    table_data = []
+    col_labels = ["$n$", "|F|$_{max}$", "Mode", "Min N gateways\nfor BFT", "Recommendation"]
+    for cd in cluster_data:
+        n     = cd["n"]
+        thresh= cd["threshold"]
+        mode  = "BFT" if thresh > 0 else "CFT only"
+        min_n = "n≥4" if n == 3 else ("n≥7" if thresh < 2 else "✓ sufficient")
+        rec   = ("Upgrade to n≥4" if n == 3 else
+                 ("Upgrade to n≥7\nfor 2-fault BFT" if thresh < 2 else
+                  "Recommended"))
+        table_data.append([str(n), str(thresh), mode, min_n, rec])
+
+    table = ax.table(
+        cellText=table_data,
+        colLabels=col_labels,
+        cellLoc="center",
+        loc="center",
+        bbox=[0, 0, 1, 1]
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+
+    # Color rows: red for CFT-only, yellow for limited BFT, green for good
+    for i, cd in enumerate(cluster_data):
+        thresh = cd["threshold"]
+        color  = ("#ffcccc" if thresh == 0 else
+                  "#fff3cd" if thresh < 2 else "#d4edda")
+        for j in range(len(col_labels)):
+            table[i+1, j].set_facecolor(color)
+
+    ax.set_title("(D4b) Deployment Recommendations", fontsize=11, pad=15)
+
+    plt.tight_layout()
+    save(fig, "fig_D4_byzantine_vs_n")
+
+    # Print the key finding for paper text
+    print()
+    print("    W6 Key Numbers for paper §5.5:")
+    for cd in cluster_data:
+        n, thresh = cd["n"], cd["threshold"]
+        mode = "BFT" if thresh > 0 else "CFT-only"
+        print(f"    n={n}: |F|_max={thresh}, mode={mode}")
+    print()
+    print("    Paper text (§5.5, Byzantine section):")
+    print('    "While our evaluation uses n=9 gateways (|F|_max=2),')
+    print('     constrained ICS cells often deploy n=3 gateways.')
+    print('     For n=3, the BFT threshold evaluates to |F|_max=0:')
+    print('     PQ-TDAG operates in CFT mode, not BFT mode.')
+    print('     Plant operators requiring strict BFT must mandate')
+    print('     n≥4 gateways (1-fault tolerance) or n≥7 (2-fault)."')
 
 
 # ══════════════════════════════════════════════════════════════
-#  MAIN
+#  FIGURE D2 — TBFR vs ARQ
 # ══════════════════════════════════════════════════════════════
+
+def plot_D2_tbfr():
+    print("  Plotting fig_D2: TBFR vs ARQ...")
+    import math
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
+    M_vals   = [3, 5, 8]
+    colors_m = ["#2A9D8F", "#E63946", "#457B9D"]
+
+    for M, color in zip(M_vals, colors_m):
+        tbfr_t, arq_t, rates = [], [], []
+        for pe in PE_RANGE:
+            if pe <= 0:
+                r = 0
+            else:
+                try:
+                    v = math.log(1e-5 / max(M-1, 1)) / math.log(pe) - 1
+                    r = max(0, math.ceil(v))
+                except Exception:
+                    r = 0
+            tbfr_t.append(T_SIGN_MS + T_TIP_MS + M * 1.0 + r * T_RTX_MS)
+            arq_t.append(T_SIGN_MS + T_TIP_MS + M * 1.0
+                         + (M-1) * (pe / max(1-pe, 1e-9)) * T_RTX_MS)
+            rt = 1 - max(0, (M-1) * pe**(
+                max(0, int((T_MAX_MS - T_SIGN_MS - T_TIP_MS - M*1.0) / T_RTX_MS))+1))
+            rates.append(max(0.0, min(1.0, rt)) * 100)
+
+        ax1.plot(PE_RANGE*100, tbfr_t, color=color, linewidth=1.8,
+                 label=f"TBFR $M={M}$")
+        ax1.plot(PE_RANGE*100, arq_t, color=color, linewidth=1.2,
+                 linestyle="--", label=f"ARQ $M={M}$")
+        ax2.plot(PE_RANGE*100, rates, color=color, linewidth=1.8,
+                 label=f"TBFR $M={M}$")
+
+    ax1.axhline(T_MAX_MS, color="#E63946", linestyle="-.", linewidth=1.5,
+                label=f"$T_{{\\max}}={T_MAX_MS}$~ms")
+    ax1.set(xlabel="$p_e$ (\\%)", ylabel="Latency (ms)",
+            title="(D2a) Recovery Time: TBFR vs. ARQ",
+            xlim=(0,25), ylim=(0, T_MAX_MS*2.5))
+    ax1.legend(fontsize=8.5, ncol=2)
+
+    ax2.axhline(GAMMA_REQ*100, color="#E63946", linestyle="-.", linewidth=1.5,
+                label=f"$\\gamma_{{req}}=99.999\\%$")
+    ax2.set(xlabel="$p_e$ (\\%)", ylabel="Success Rate (\\%)",
+            title="(D2b) TBFR Success Rate",
+            xlim=(0,25), ylim=(99.0, 100.01))
+    ax2.legend(fontsize=9)
+
+    plt.tight_layout()
+    save(fig, "fig_D2_tbfr_vs_arq")
+
+
+# ══════════════════════════════════════════════════════════════
+#  FIGURE D3 — Attack Success Probability vs M
+# ══════════════════════════════════════════════════════════════
+
+def plot_D3_attack_vs_m():
+    print("  Plotting fig_D3: Attack probability vs M...")
+    analytical = [(M - 1) * 2**(-128) for M in M_RANGE]
+
+    fig, ax = plt.subplots(figsize=(3.5, 4.5))
+    ax.semilogy(M_RANGE, analytical, color="#E63946",
+                linewidth=2.5, marker="o", markersize=6,
+                label="Analytical bound (Theorem~1)")
+    ax.axhline(2**(-128), color="#888", linestyle="--", linewidth=1.0,
+               label="Quantum bound $2^{-128}$")
+    ax.set(xlabel="Window Size $M$",
+           ylabel="Attack Success Probability",
+           title="(D3) Security vs. $M$",
+           xlim=(1, max(M_RANGE)))
+    ax.legend(fontsize=9)
+    plt.tight_layout()
+    save(fig, "fig_D3_attack_vs_m")
+
+
 def main():
     print()
-    print("═" * 60)
-    print("  PQ-TDAG — Group D: Security Figures (Step 5)")
-    print("═" * 60)
-    print()
+    print("=" * 60)
+    print("  PQ-TDAG — Group D: Security Figures + W6 fix")
+    print("=" * 60 + "\n")
 
-    load_timings()  # just verify file exists
-
+    plot_D1_byzantine(n_gateways=9)
+    plot_D4_byzantine_vs_n()
+    plot_D2_tbfr()
     plot_D3_attack_vs_m()
-    plot_D2_tbfr_vs_arq()
-    plot_D1_byzantine_robustness()
 
     print()
-    print("═" * 60)
+    print("=" * 60)
     print("  DONE — Group D figures saved.")
-    print()
-    print("  Next step:")
-    print("  See scripts/step_6_ns3_setup.sh for NS-3 installation")
-    print("═" * 60)
-    print()
+    print("=" * 60)
 
 
 if __name__ == "__main__":
